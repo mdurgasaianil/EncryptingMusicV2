@@ -1,0 +1,107 @@
+!pip install pydub
+
+import soundfile as sf
+import numpy as np
+import librosa
+from pydub import AudioSegment
+from pydub.exceptions import CouldntDecodeError
+import pickle
+
+
+def text_to_binary(text):
+    return ''.join(format(ord(char), '08b') for char in text)
+
+def binary_to_text(binary_data):
+    if not binary_data:
+        return ''
+    return ''.join(chr(int(binary_data[i:i+8], 2)) for i in range(0, len(binary_data), 8))
+def embed_bit(value, bit):
+    # Embed the bit into the least significant bit of value
+    return (value & ~1) | bit
+def encrypt_message_to_audio(message, key, audio_input_path, audio_output_path):
+    y, sr = librosa.load(audio_input_path, sr=None)
+    lis = []
+    binary_message = text_to_binary(message)
+    binary_key = text_to_binary(key)
+    combined_binary = binary_key + format(len(binary_message), '016b') + binary_message
+
+    if len(combined_binary) > len(y) * 8:
+        raise ValueError("Audio file is not long enough to hold the message.")
+
+    binary_index = 0
+    for i in range(len(y)):
+        if binary_index >= len(combined_binary):
+            break
+        v = y[i] * 32767
+        sample_in = int(y[i] * 32767)
+        sample = int(y[i] * 32767)
+        bit = int(combined_binary[binary_index])
+        sample = embed_bit(sample, bit)
+        binary_index += 1
+        if sample == sample_in:
+          lis.append(v/32767)
+        else:
+          lis.append(sample/32767)
+    with open(audio_output_path, 'wb') as fp:
+      pickle.dump(lis, fp)
+def decrypt_message_from_audio(encrypted_audio_path, key):
+    # y, sr = librosa.load(encrypted_audio_path, sr=None)
+    # y,sr = sf.read(encrypted_audio_path)
+    with open (encrypted_audio_path, 'rb') as fp:
+      y = pickle.load(fp)
+    extracted_binary = ''
+    for i in range(len(y)):
+        sample = int(y[i] * 32767)
+        extracted_binary += str(sample & 1)
+    binary_key = text_to_binary(key)
+    extracted_key = extracted_binary[:len(binary_key)]
+
+    print(f"Extracted key (binary): {extracted_key}")
+    print(f"Expected key (binary): {binary_key}")
+    if extracted_key != binary_key:
+        raise ValueError("Decryption key does not match.")
+
+    # binary_message_length = len(extracted_binary[len(binary_key):len(binary_key)+16])
+    # binary_message = extracted_binary[len(binary_key)+16:]
+    # message_length = binary_message_length + len(binary_key) + 16
+    # message = binary_to_text(binary_message[:message_length])
+    binary_message_length = extracted_binary[len(binary_key):len(binary_key)+16]
+    binary_message = extracted_binary[len(binary_key)+16:]
+
+    message_length = int(binary_message_length, 2)
+    message = binary_to_text(binary_message[:message_length])
+
+    return message
+def convert_mp3_to_wav(mp3_path, wav_path):
+    try:
+        audio = AudioSegment.from_mp3(mp3_path)
+        audio.export(wav_path, format="wav")
+    except CouldntDecodeError:
+        print("Error: Could not decode MP3 file. Make sure the file is not corrupted.")
+def main_encrypt():
+    message = input("Enter the message to encrypt: ").strip()
+    key = input("Enter the encryption key (can be characters and/or integers): ").strip()
+    audio_input_path = input("Enter the path to the audio file (MP3) to encrypt: ").strip()
+    audio_output_path = "encrypted_message.txt"
+    if audio_input_path.endswith(".mp3"):
+        wav_path = "temp_audio.wav"
+        convert_mp3_to_wav(audio_input_path, wav_path)
+        audio_input_path = wav_path
+    encrypt_message_to_audio(message, key, audio_input_path, audio_output_path)
+    print(f"Encrypted message saved to {audio_output_path}")
+    return audio_output_path
+def main_decrypt(encrypted_audio_path):
+    key = input("Enter the decryption key (same as used during encryption): ").strip()
+    # print(decrypt_message_from_audio(encrypted_audio_path, key))
+    message = decrypt_message_from_audio(encrypted_audio_path, key)
+    print("Decrypted message:", message)
+if __name__ == "__main__":
+    choice = input("Choose (1) to encrypt or (2) to decrypt: ").strip()
+    if choice == '1':
+        encrypted_audio_path = main_encrypt()
+        print(f"Encrypted audio path: {encrypted_audio_path}")
+    elif choice == '2':
+        encrypted_audio_path = input("Enter the path to the encrypted audio file: ").strip()
+        main_decrypt(encrypted_audio_path)
+    else:
+        print("Invalid choice.")
